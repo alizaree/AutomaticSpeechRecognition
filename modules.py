@@ -12,7 +12,7 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 from IPython.display import Audio
 
-
+from torch.utils.data import Dataset, DataLoader
 
 def freq_to_mel(freq):
     return 2595.0 * np.log10(1.0 + freq / 700.0)
@@ -56,8 +56,9 @@ def dct(dct_filter_num, filter_len):
     return basis
 
 
-def Create_Mel( audio, white_noise=True, dct_filter_num=26, npc=13, sr=16000 ):
-    audio_spec = librosa.stft(audio, n_fft=512, hop_length=256)
+def Create_Mel( audio, white_noise=True, dct_filter_num=26, npc=13 ,sr=16000,hop_length=256, Plot=True):
+    audio_spec = librosa.stft(audio, n_fft=512, hop_length=hop_length)
+    spec_phase = np.angle(audio_spec)
     audio_spec_mag = np.abs(audio_spec)
     print('shape of spec ', audio_spec_mag.shape)
     # TODO: calculate MFCC using the magnitude spectrogram above
@@ -75,10 +76,12 @@ def Create_Mel( audio, white_noise=True, dct_filter_num=26, npc=13, sr=16000 ):
     if white_noise:
         enorm = 2.0 / (mel_freqs[2:mel_filter_num+2] - mel_freqs[:mel_filter_num])
         filters *= enorm[:, np.newaxis]
+        
 
-    plt.figure(figsize=(15,4))
-    for n in range(filters.shape[0]):
-        plt.plot(filters[n])
+    if Plot:
+        plt.figure(figsize=(15,4))
+        for n in range(filters.shape[0]):
+            plt.plot(filters[n])
 
     print('filter shape', filters.shape)   
     audio_filtered = np.dot(filters, (audio_spec_mag)**2)+1e-8
@@ -96,4 +99,48 @@ def Create_Mel( audio, white_noise=True, dct_filter_num=26, npc=13, sr=16000 ):
 
 
     print('shape of mel:' , mel_spec.shape)  # freq, time_steps
-    return mel_spec
+    
+            
+    return mel_spec, audio_spec_mag, spec_phase
+
+
+def frame_label( label, hop_length=256):
+    max_L=len(label)//hop_length+1
+    new_label=np.zeros(max_L)
+    for sample in range(len(label)):
+        new_label[sample//hop_length]+=label[sample]
+    new_label=[1 if idd>0 else 0 for idd in new_label]
+    return new_label
+
+
+def make_batch(a, batch_size):
+        b=a.reshape(a.shape[0],batch_size,a.shape[1]//batch_size).transpose(1,0,2)
+        return b
+        
+
+
+# a class to load the saved h5py dataset
+class dataset_pipeline(Dataset):
+    def __init__(self, mixture, speech1, speech2):
+        super(dataset_pipeline, self).__init__()
+
+        #self.h5pyLoader = h5py.File(path, 'r')
+        
+        self.mixture = mixture
+        self.speech1 = speech1
+        self.speech2 = speech2
+        
+        self._len = self.mixture.shape[0]  # number of utterances
+    
+    def __getitem__(self, index):
+        # calculate STFT here
+        mixture_spec = torch.from_numpy(np.squeeze(self.mixture[index,:,:]).astype(np.float32)) # only use the magnitude spectrogram
+        speech1_spec = torch.from_numpy(np.squeeze(self.speech1[index,:,:]).astype(np.float32))
+        speech2_spec = torch.from_numpy(np.squeeze(self.speech2[index,:,:]).astype(np.float32))
+            
+        return mixture_spec, speech1_spec, speech2_spec
+    
+    def __len__(self):
+        return self._len
+
+
